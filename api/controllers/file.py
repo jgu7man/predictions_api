@@ -1,16 +1,13 @@
 from api.firebase_app import FirebaseApp
-from IPython.display import display
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
 
 
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
-import datetime
+
 import json
 
 
@@ -69,25 +66,52 @@ class UploadFile(APIView):
         
         default_storage.delete(local_path)
         return Response({'message': 'ok', 'result': result})
+
+
+
+class LoadTable(APIView):
+    def get(self, request, format=None):
     
-    # def get(self, request, format=None):
-        
-    #     return render(request, 'api/views/upload.html')
-    #     doc_ref = db.collection(u'test').document(u'test_doc')
-        
-    #     try:
-    #         doc = doc_ref.get()
-    #         result = doc.to_dict()
-    #         print(doc)
-    #     except:
-    #         print('no exite')
-    #         result = 'no doc'
+        # VALIDATE THERE IS ID
+        try:
+            doc_id = request.query_params['id']
+            doc_ref = db.collection(u'tables').document(doc_id)
+        except:
+            return Response({
+                'message': 'La petición debe incluir un id en el body',
+                'status':500
+            })
             
+
+        # VALIDATE IS DOCUMENT IN FIRESTORE
+        try:
+            doc = doc_ref.get()
+            doc_URL = doc.to_dict()['fileURL']        
+        except:
+            return Response({
+                'message': 'El archivo no exite o fue eliminado', 
+                'status': 500
+            })
         
         
+        # FILTER THE LIST
+        df = pd.read_csv(doc_URL,  decimal=".")
+        products_list = df[['codigo', 'descripcion']]
+        products_list = products_list.drop_duplicates(subset=['codigo']).dropna()
+        products_list['descripcion'] = products_list['descripcion'].str.strip()
+        
+        
+        # GENERATE JSON RESULT
+        loadfile_result = products_list.to_json(orient="table")
+        count = products_list.describe()['codigo']['count']
     
-    # def post(self,request, format=None):
-        
-    #     return Response({
-    #         'message':'ok'
-    #     })
+        result = {
+            'total_count': int(count),
+            'product_list': json.loads(loadfile_result)
+        }
+
+        return Response({
+            'message': 'ok', 
+            'result': result,
+            'status': 200
+            })
