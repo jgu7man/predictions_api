@@ -1,0 +1,10 @@
+django==3.0.8
+djangorestframework==3.11.0
+scikit-learn==0.23
+pandas==1.1.4
+matplotlib==3.3.3
+numpy==1.19.0
+scipy==1.5.4
+statsmodels==0.12.1
+pmdarima==1.8.0
+firebase_admin==4.4.0
