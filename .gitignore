@@ -1,2 +1,3 @@
 .venv/Lib/
 api/firebase_app.py
+static/

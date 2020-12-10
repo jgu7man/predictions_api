@@ -217,7 +217,9 @@ class ARIMAprediction(APIView):
         predict_df.to_json('api/uploads/arima_prediction.json', orient="index")
         
         arima_pred_imgURL = upload_file('api/uploads/', cloud_path, 'arima_prediction.jpg')
+        default_storage.delete('api/uploads/arima_prediction.jpg')
         arima_pred_jsonURL = upload_file('api/uploads/', cloud_path, 'arima_prediction.json')
+        default_storage.delete('api/uploads/arima_prediction.json')
         
         
         predict_result = {

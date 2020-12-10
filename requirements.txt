@@ -8,3 +8,7 @@ scipy==1.5.4
 statsmodels==0.12.1
 pmdarima==1.8.0
 firebase_admin==4.4.0
+django-cors-headers
+PyMySQL==0.10.1
+wheel==0.36.1
+gunicorn==20.0.4
