@@ -84,11 +84,13 @@ class FilterProduct(APIView):
         product_ref = doc_ref.collection('products').document(product_id)
         product_ref.set({
             "name": product_name,
-            "datasetURL": datasetURL,
-            "timelineURL":timelineURL,
-            "saleschartURL":saleschartURL,
-            "databyperiodsURL":databyperiodsURL,
-            "stats": product_stats
+            "stats": product_stats,
+            "files": {
+                "dataset": datasetURL,
+                "timeline":timelineURL,
+                "sales_chart":saleschartURL,
+                "data_byperiodsUR":databyperiodsURL,
+            }
         })
         
         return Response({
@@ -96,10 +98,12 @@ class FilterProduct(APIView):
             'message':'ok',
             'result': {
                 "name": product_name,
-                "datasetURL": datasetURL,
-                "timelineURL":timelineURL,
-                "saleschartURL":saleschartURL,
-                "databyperiodsURL": databyperiodsURL,
+                "files": {
+                    "dataset": datasetURL,
+                    "timeline":timelineURL,
+                    "sales_chart":saleschartURL,
+                    "data_byperiodsUR":databyperiodsURL,
+                },
                 "stats": product_stats
             }
         })
@@ -126,14 +130,22 @@ class MonthSalesDetails(APIView):
     
         doc_ref = db.document('tables/'+table_id+'/products/'+product_id)
         doc = doc_ref.get()
-        doc_URL = doc.to_dict()['timelineURL']
+        files = doc.to_dict()['files']
+        
+        try: doc_URL = files['timeline']
+        except: return Response({
+            'message':'El archivo "timeline.json" no exite o fue eliminado. Intenta realizar un filtrado de producto nuevamente',
+            'status': 404
+        })
+        
         product_name = doc.to_dict()['name']
         dataset = pd.read_json(doc_URL) 
         locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         
         # GROUP DATA BY SALES IN DATE 
         # display(dataset.head())
-        # df_dates = dataset.groupby(dataset['fecha'], as_index=True).aggregate({ 'unidades': 'sum' })
+        df_dates = dataset.groupby(dataset.index, as_index=True).aggregate({ 'unidades': 'sum' })
+        df_dates.to_csv('api/uploads/sales-dates.csv', header=False)
         
         # GROUP DATA BY MONTHS
         product_dataset = dataset['unidades']
@@ -170,6 +182,7 @@ class MonthSalesDetails(APIView):
             normalized_df[mes] = pd.Series(values)
             
         
+        normalized_df.to_json('api/uploads/normalized_sells.json', orient="columns")
         months_box = normalized_df.replace(0,np.nan )
         months_box.plot.box(figsize=(8,5))
         plt.savefig('api/uploads/month_sales_normalized.jpg')
@@ -177,16 +190,23 @@ class MonthSalesDetails(APIView):
         # STORAGE FILE
         product_refname = product_name.replace(' ', '_').lower()
         cloud_path = 'tables/'+table_id+'/product/'+product_refname+'/'
+        salesdatesURL = upload_file('api/uploads/', cloud_path, 'sales-dates.csv')
+        normalizedsellsURL = upload_file('api/uploads/', cloud_path, 'normalized_sells.json')
         monthsaleschartURL = upload_file('api/uploads/', cloud_path, 'month_sales_normalized.jpg')
         default_storage.delete('api/uploads/month_sales_normalized.jpg')
         
         # CREATE RESULT
         result = {
-            "max_sales":maxlength,
-            "transactions":transactions,
-            "avgsales_per_month": avg_mes,
-            "monthsaleschartURL":monthsaleschartURL
+            u"max_sales": int(maxlength),
+            u"transactions": int(transactions),
+            u"avgsales_per_month": int(avg_mes),
+            u"files.month_sales_chart": monthsaleschartURL,
+            u"files.normalized_sells": normalizedsellsURL,
+            u"files.sales_dates": salesdatesURL    
         }
+        
+        # UPDATE FIRESTORE 
+        doc_ref.update(result)
         
         return Response({
             "status":200,
