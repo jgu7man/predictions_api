@@ -81,16 +81,18 @@ class FilterProduct(APIView):
         saleschartURL = upload_file(local_path, product_path, 'sales-chart.jpg')
         default_storage.delete(local_path+'sales-chart.jpg')
         
+        product_stats['files'] = {
+            'dataset': datasetURL,
+            'timeline': timelineURL,
+            'data_byperiods': databyperiodsURL,
+            'chart': saleschartURL
+        }
+        
         product_ref = doc_ref.collection('products').document(product_id)
         product_ref.set({
             "name": product_name,
+            "code": product_id,
             "stats": product_stats,
-            "files": {
-                "dataset": datasetURL,
-                "timeline":timelineURL,
-                "sales_chart":saleschartURL,
-                "data_byperiodsUR":databyperiodsURL,
-            }
         })
         
         return Response({
@@ -98,12 +100,7 @@ class FilterProduct(APIView):
             'message':'ok',
             'result': {
                 "name": product_name,
-                "files": {
-                    "dataset": datasetURL,
-                    "timeline":timelineURL,
-                    "sales_chart":saleschartURL,
-                    "data_byperiodsUR":databyperiodsURL,
-                },
+                "code": product_id,
                 "stats": product_stats
             }
         })
@@ -114,6 +111,7 @@ class FilterProduct(APIView):
 class MonthSalesDetails(APIView):
     def get(self, request, format=None):
         # VALIDATE THERE IS TABLE ID
+        print('Request ok')
         try:
             table_id = request.query_params['table']
         except: return Response({
@@ -121,6 +119,7 @@ class MonthSalesDetails(APIView):
                 'status':500
             })
         
+        print('table ok', table_id)
         # VALIDATE IS PRODUCT ID     
         try: product_id = request.query_params['product']
         except: return Response({
@@ -128,16 +127,27 @@ class MonthSalesDetails(APIView):
                 'status':500
             })
     
+        print('prodid ok', product_id)
         doc_ref = db.document('tables/'+table_id+'/products/'+product_id)
-        doc = doc_ref.get()
-        files = doc.to_dict()['files']
+        try: doc = doc_ref.get()
+        except: return Response({
+            'status':404,
+            'message':'No se encontró el documento en la base de datos'
+        })
+        try: files = doc.to_dict()['stats']['files']
+        except: return Response({
+            'status':404,
+            'message':'No se encontró la lusta de archivos en la base de datos'
+        })
         
+        print('firestore ok')
         try: doc_URL = files['timeline']
         except: return Response({
             'message':'El archivo "timeline.json" no exite o fue eliminado. Intenta realizar un filtrado de producto nuevamente',
             'status': 404
         })
         
+        print('urls ok')
         product_name = doc.to_dict()['name']
         dataset = pd.read_json(doc_URL) 
         locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
@@ -197,16 +207,15 @@ class MonthSalesDetails(APIView):
         
         # CREATE RESULT
         result = {
-            u"max_sales": int(maxlength),
-            u"transactions": int(transactions),
-            u"avgsales_per_month": int(avg_mes),
-            u"files.month_sales_chart": monthsaleschartURL,
-            u"files.normalized_sells": normalizedsellsURL,
-            u"files.sales_dates": salesdatesURL    
+            u"max_monthsales": int(maxlength),
+            u"avgsales_per_month": float("{:.2f}".format( avg_mes)),
+            u"month_sales_chart": monthsaleschartURL,
+            u"normalized_sells": normalizedsellsURL,
+            u"sales_dates": salesdatesURL    
         }
         
         # UPDATE FIRESTORE 
-        doc_ref.update(result)
+        doc_ref.update({ "month_details":result })
         
         return Response({
             "status":200,
@@ -218,12 +227,14 @@ class MonthSalesDetails(APIView):
 def get_product_stats(dataset):
     
     # CALCULATE PROMEDIATES
-    sales_quantity =      dataset['unidades'].describe()['count']
+    sales_quantity = dataset['unidades'].describe()['count']
     avg_sell_price = dataset['precio_unit_venta'].describe()['mean']
-    avg_margin =     dataset['por_margen'].describe()['50%']
+    max_sell_price = dataset['precio_unit_venta'].describe()['max']
+    avg_margin =     dataset['por_margen'].describe()['mean']
     max_margin =      dataset['por_margen'].describe()['max']
-    avg_purch_price =  dataset['precio_unit_costo'].describe()['50%']
+    avg_purch_price =  dataset['precio_unit_costo'].describe()['mean']
     min_purch_price =   dataset['precio_unit_costo'].describe()['min']
+    
     
     # CALCULATE SALES DAYS
     first = dataset.iloc[0]['fecha']
@@ -234,17 +245,18 @@ def get_product_stats(dataset):
     sold_units = int(sold_units)
 
     stats = {
-        "sold_units": sold_units,
         "avgs": {
-            "sales_quantity":sales_quantity,
-            "avg_sell_price":avg_sell_price,
-            "avg_margin":avg_margin,
-            "max_margin":max_margin,
-            "avg_purch_price":avg_purch_price,
-            "min_purch_price":min_purch_price,
+            "sold_units": int(sold_units),
+            "sales_quantity":int(sales_quantity),
+            "avg_sell_price":int(avg_sell_price),
+            "max_sell_price":int(max_sell_price),
+            "avg_margin":int(avg_margin * 100),
+            "max_margin":int(max_margin * 100),
+            "avg_purch_price":int(avg_purch_price),
+            "min_purch_price":int(min_purch_price),
         },
         "time_data":{
-            "period_in_days": periodo_ventas,
+            "period_in_days": int(periodo_ventas),
             "first_sale_date": first,
             "last_sale_date": last,
         },  

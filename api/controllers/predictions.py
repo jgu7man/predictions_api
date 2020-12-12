@@ -54,8 +54,14 @@ class EstimatedPrediction(APIView):
         locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
-        doc = doc_ref.get()
-        doc_URL = doc.to_dict()['timelineURL']
+        
+        try:doc = doc_ref.get()
+        except: return Response({
+            'message':'No se encontró el documento en la base de datos',
+            'status': 404
+        })
+        
+        doc_URL = doc.to_dict()['stats']['files']['timeline']
         product_name = doc.to_dict()['name']
         dataset = pd.read_json(doc_URL)
         dataset = dataset.fillna(method='ffill')
@@ -67,25 +73,25 @@ class EstimatedPrediction(APIView):
         est_pred_jsonURL = upload_file('api/uploads/',cloud_path, 'estimated_predict.json' )
         default_storage.delete('api/uploads/estimated_predict.json')
         
-        result = {
-            "predict_results": predict_results,
-            "files": {
-                "est_pred_imgURL": est_pred_imgURL,
-                "est_pred_jsonURL": est_pred_jsonURL
-            },
-        }
-        
-        doc_ref.collection(u'predictions').document(u'estimated').set(result)
-        
-        return Response({
-            "status":200,
-            "message":"ok",
-            "result":result
+        predict_results['imgURL'] = est_pred_imgURL
+        predict_results['jsonURL'] = est_pred_jsonURL
+    
+        try: doc_ref.collection(u'predictions').document(u'estimated').set(predict_results)
+        except: return Response({
+            'message':'No se pudo guardar',
+            'status':500
         })
         
+        print('si se guardó')
         
-        
-        
+        return Response({
+            "result": predict_results,
+            "status":200,
+            "message":"ok",
+        })
+
+
+
 def make_estimate_prediction(dataset, test_size, window_size, product_name):
     df_shift = dataset['unidades'].shift(1)
     df_mean_roll = df_shift.rolling(window_size).mean()
@@ -144,8 +150,8 @@ def make_estimate_prediction(dataset, test_size, window_size, product_name):
     result = {
         "total_predicted": int(total_predicted),
         "months_predicted": len(hat_groups),
-        "avg_for_sell": float(mean_predicted),
-        "error_mean" : mse,
+        "avg_for_sell": float("{:.2f}".format(mean_predicted)),
+        "error_mean" : float("{:.2f}".format(mse)),
     }
     
     return result
@@ -176,20 +182,29 @@ class ARIMAprediction(APIView):
                 'status':500
             })
         
+        print('body_ok')
+        
         locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
-        doc = doc_ref.get()
-        files = doc.to_dict()['files']
+        
+        try: doc = doc_ref.get()
+        except: return Response({
+            'message':'No se encontró el documento en la base de datos',
+            'status':404
+        })
+        # files = doc.to_dict()['files']
         
         
         # VALIDATE DATASET
-        try: doc_URL = files['sales_dates']
+        try: doc_URL = doc.to_dict()['month_details']['sales_dates']
         except: return Response({
             'message':'Falta dataset de datos normalizados',
             'status': 404
         })
             
+            
+        print('firebase ok')
         
         dataset = pd.read_csv(doc_URL, header=None, index_col=0, parse_dates=True, squeeze=True)
 
@@ -199,15 +214,26 @@ class ARIMAprediction(APIView):
         # dataset.to_csv('dataset.csv', header=False)
         # validation.to_csv('validation.csv', header=False)
         
+        print(dataset)
         groups = dataset.groupby(pd.Grouper(freq='M'))
         sells_avg = groups.describe()['count'].sum()/len(groups)
 
         
-        Arima_model=auto_arima(dataset, start_p=1, start_q=1, max_p=8, max_q=8, start_P=0, start_Q=0, max_P=8, max_Q=8, m=12, seasonal=True, trace=True, d=1, D=1, error_action='warn', suppress_warnings=True, random_state = 20, n_fits=30)
+        print('doc readed')
+        print(dataset)
+        try:
+            Arima_model=auto_arima(dataset, start_p=1, start_q=1, max_p=8, max_q=8, start_P=0, start_Q=0, max_P=8, max_Q=8, m=12, seasonal=True, trace=True, d=1, D=1, error_action='warn', suppress_warnings=True, random_state = 20, n_fits=30)
+        except: return Response({
+            'message':'No hay suficientes datos para realizar esta predicción',
+            'status':204
+        })
+        
         
         predict = Arima_model.predict(n_periods=test_size)
         total_value_predictions = np.sum(predict)
         months_predicted = total_value_predictions / sells_avg
+        
+        print('prediction ok')
         
         plt.figure(figsize=(12,6))
         plt.plot(predict);
@@ -221,24 +247,23 @@ class ARIMAprediction(APIView):
         arima_pred_jsonURL = upload_file('api/uploads/', cloud_path, 'arima_prediction.json')
         default_storage.delete('api/uploads/arima_prediction.json')
         
+        print('files ok')
         
         predict_result = {
-            "avg_for_sell": float(sells_avg),
+            "avg_for_sell": float("{:.2f}".format(sells_avg)),
             "total_predicted": int(total_value_predictions),
-            "months_predicted":float(months_predicted),
-            "files": {
-                "arima_pred_img": arima_pred_imgURL,
-                "arima_pred_json": arima_pred_jsonURL,
-            }
+            "months_predicted":float("{:.2f}".format(months_predicted)),
+            "imgURL": arima_pred_imgURL,
+            "jsonURL": arima_pred_jsonURL,
         }
         
         doc_ref.collection(u'predictions').document(u'arima').set(predict_result)
         
-        
+        print('saved ok')
         return Response({
+            'result': predict_result,
             'status':200,
             'message': 'ok',
-            'result': predict_result
         })
         
         

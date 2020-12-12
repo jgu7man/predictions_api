@@ -25,6 +25,7 @@ class LoadTable(APIView):
         # VALIDATE IS DOCUMENT IN FIRESTORE
         try:
             doc = doc_ref.get()
+            result_data = doc.to_dict()
             doc_URL = doc.to_dict()['fileURL']        
         except:
             return Response({
@@ -45,7 +46,7 @@ class LoadTable(APIView):
         count = products_list.describe()['codigo']['count']
     
         result = {
-            'total_count': int(count),
+            'data': result_data,
             'product_list': json.loads(loadfile_result)
         }
 

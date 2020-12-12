@@ -18,7 +18,14 @@ class UploadFile(APIView):
     def post(self, request, format=None):
         
         # LOAD FILE
-        uploaded_file = request.FILES['dataset']
+        try:
+            uploaded_file = request.FILES['dataset']
+        except: return Response({
+            'status':400,
+            'message':'La petición no contiene archivo'
+        })
+        
+        print('Archivo ok')
         filename = uploaded_file.name
         local_path = 'api/uploads/'+filename        
         # cloud_path = 'uploaded_files'
@@ -26,11 +33,18 @@ class UploadFile(APIView):
         df.to_csv(local_path)
         
         
+        print('Archivo leido')
         # # FILTER THE LIST
-        products_list = df[['codigo', 'descripcion']]
+        try: products_list = df[['codigo', 'descripcion']]
+        except: return Response({
+            'status': 405,
+            'message': 'La tabla no contiene columnas correctas'
+        })
+            
         products_list = products_list.drop_duplicates(subset=['codigo']).dropna()
         products_list['descripcion'] = products_list['descripcion'].str.strip()
         
+        print('Lista creada')
         
         # # GENERATE JSON RESULT
         loadfile_result = products_list.to_json(orient="table")
@@ -45,18 +59,15 @@ class UploadFile(APIView):
         })
         doc_id = doc[1].id
         
+        print('Id obtenido')
         # bucket = st.bucket('tables')
         blob = st.blob('tables/'+doc_id+'/'+filename)
         blob.upload_from_filename(local_path)
         blob.make_public()
         fileURL = blob.public_url
         
-        tables_ref.document(doc_id).update({
-            'fileURL':fileURL,
-            'doc_id':doc_id
-        })
         
-        
+        print('Archivo cargado a storage')
         result_data = {
             'total_count': int(count),
             'fileURL':fileURL,
@@ -64,6 +75,8 @@ class UploadFile(APIView):
             'doc_id':doc_id
         }
         
+        print('Documento actualizado')
+        tables_ref.document(doc_id).update(result_data)
         
         result = {
             'data': result_data,
