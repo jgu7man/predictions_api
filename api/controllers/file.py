@@ -9,7 +9,6 @@ import json
 
 db = FirebaseApp.fs
 st = FirebaseApp.st
-
 class UploadFile(APIView):
     def get(self, request, format=None):
         return render(request, 'upload.html')
