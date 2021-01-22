@@ -5,6 +5,11 @@ from django.core.files.storage import default_storage
 from api.controllers.file import upload_file
 from sklearn.svm import SVR
 from pmdarima.arima import auto_arima
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+# from IPython.core.display import display
+
 
 import math
 import pandas as pd
@@ -12,12 +17,345 @@ import matplotlib.pyplot as plt
 import matplotlib  as mlp
 import numpy as np
 import locale
-import datetime
-import json
+import json, codecs
+import urllib.request
 
 db = FirebaseApp.fs
 st = FirebaseApp.st
 mlp.style.use('seaborn')
+
+
+def ValidateRequest(query_params, request):
+
+    global message
+    global params
+    params = {}
+    for param in query_params:
+        try: params[param] = request[param]
+        except: message = f'La petición debe incluir el parámetro "{param}"' 
+    
+    return params
+    
+
+
+class MonthSalesPrediction(APIView):
+    def get(self, request, format=None):
+        
+        
+        
+        # VALIDATE PARAMS
+        try: params = ValidateRequest(['table', 'product', 'months'], request.query_params)
+        except: return Response({
+            'message': 'Falto un parámetro en la petición',
+            'status': 400
+        }, status=400)
+    
+        table_id = params['table']
+        product_id = params['product']
+        query_months = params['months']
+        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        
+        
+        
+        # IMPORT FILE
+        global cloud_path
+        global local_path
+        cloud_path = 'tables/'+table_id+'/products/'+product_id
+        doc_ref = db.document(cloud_path)
+        
+        try:doc = doc_ref.get()
+        except: return Response({
+            'message':'No se encontró el documento en la base de datos',
+            'status': 404
+        })
+        print('Petición realizada correctamente')
+        
+        
+        
+        
+        # READ TABLE
+        doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
+        dataset = pd.read_csv(doc_URL,  decimal=".")  
+        local_path = 'api/uploads/'
+        
+        print('Archivo cargado')
+        # display(dataset.head())
+        
+        
+        
+        
+        # TRAIN AND PREDICT
+        train_result = train_year_predictions(dataset)
+        reg = train_result['reg']
+        score = train_result['score']
+        predictionsURL = train_result['predictionsURL']
+        print('trained')
+        
+        
+        
+        
+        
+        
+        # meses que el usuario quiere conocer en predicción
+        months_query = int(query_months)
+        months_required = score[1:months_query +1 ]
+
+        predict_months = reg.predict(months_required)
+        predicted_cant = math.ceil(predict_months.sum())
+        print('Se venderán', predicted_cant, 'unidades en', months_query, 'meses')
+        
+        # plt.plot(predict_year, 'ro', predict_months, 'bo')
+        # plt.savefig(local_path+'months_prediction.jpg')
+        # monthpredictionURL = upload_file(local_path, cloud_path, 'months_prediction.jpg')
+        
+        result = {
+            "predicted_cant":int(predicted_cant),
+            # "months_prediction_chart": monthpredictionURL,
+        }
+        
+        
+        doc_ref.update({ "year_predictions_URL":predictionsURL})
+        
+        return Response({
+            "result": result,
+            "status":200,
+            "message":"ok",
+        })
+        
+class ReverseSalesPredictions(APIView):
+    def get(self, request, format=None):
+        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        
+        try: params = ValidateRequest(['table', 'product', 'cant'], request.query_params)
+        except: return Response({
+            'message': 'Falto un parámetro en la petición',
+            'status': 400
+        }, status=400)
+        
+        table_id = params['table']
+        product_id = params['product']
+        query_cant = params['cant']
+        
+        # IMPORT FILE
+        global cloud_path
+        cloud_path = 'tables/'+table_id+'/products/'+product_id
+        doc_ref = db.document(cloud_path)
+        
+        try:doc = doc_ref.get()
+        except: return Response({
+            'message':'No se encontró el documento en la base de datos',
+            'status': 404
+        })
+        
+        print('Petición realizada correctamente')
+        
+        global local_path
+        doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
+        dataset = pd.read_csv(doc_URL,  decimal=".")  
+        local_path = 'api/uploads/'
+        
+        print('Archivo cargado')
+        # display(dataset.head())
+        
+
+        
+        
+        # TRAIN AND PREDICT
+        train_result = train_year_predictions(dataset)
+        reg = train_result['reg']
+        score = train_result['score']
+        predictionsURL = train_result['predictionsURL']
+        print('trained')
+        
+        
+        
+        remaining_cant = int(query_cant)
+        months_required = score[0:12]
+        predict_months = reg.predict(months_required)
+        months_cant = 0
+        for cant in predict_months:
+            remaining_cant -= cant
+            if remaining_cant > 0: months_cant = months_cant + 1
+            else: break
+        
+        print(f"{query_cant} unidades se venderán en {months_cant} meses")
+        
+        result = {
+            "months_cant":int(months_cant),
+        }
+        
+        
+        doc_ref.update({ "year_predictions_URL":predictionsURL})
+        return Response({
+            "result": result,
+            "status":200,
+            "message":"ok",
+        })
+
+
+
+def train_year_predictions(dataset):
+    
+    X = dataset[['Unitario Venta']]
+    Y = dataset['Unidades']
+
+    sc_X = StandardScaler()
+
+    X = sc_X.fit_transform(X)
+    X = sc_X.transform(X)
+
+    # Entrenación
+    reg = LinearRegression().fit(X, Y)
+    print("The Linear regression score on training data is ", round(reg.score(X, Y),2))
+    
+
+    # Basado en la cantidad de meses obtenidos, se ajusta para predecir al menos 1 año
+    repeats = (12 - len(X)) / int(len(X)) 
+    repeats = math.ceil(repeats) + 1
+    X = np.tile(X,(repeats, 1))
+    
+    # crea lista de predicciones
+    predict_year = reg.predict(X)
+    p = predict_year.tolist()
+    json.dump(p, codecs.open(local_path+'year_predictions.json', 'w'))
+    print(cloud_path)
+    yearpredictionsURL = upload_file(local_path, cloud_path+'/', 'year_predictions.json')
+    print(yearpredictionsURL)
+    print('preicciones ok')
+    
+    return {
+        'reg': reg,
+        'score': X,
+        'predictionsURL': yearpredictionsURL
+    }
+
+
+
+
+class AnalyzeProvOffering(APIView):
+    def get(self, request, format=None):
+        # VALIDATE THERE IS TABLE ID
+        
+        try: params = ValidateRequest(['table', 'product', 'provider', 'condition', 'desc', 'stock'], request.query_params)
+        except: return Response({
+            'message': 'Falto un parámetro en la petición',
+            'status': 400
+        }, status=400)
+        
+        table_id = params['table']
+        product_id = params['product']
+        provider = params['provider']
+        condition = int(params['condition'])
+        desc = int(params['desc']) / 100
+        stock = int(params['stock'])
+        
+
+
+        # IMPORT FILE
+        cloud_path = 'tables/'+table_id+'/products/'+product_id
+        doc_ref = db.document(cloud_path)
+        
+        try:doc = doc_ref.get()
+        except: return Response({
+            'message':'No se encontró el documento en la base de datos',
+            'status': 404
+        })
+        
+        doc_URL = doc.to_dict()['year_predictions_URL']
+        global dataset
+        with urllib.request.urlopen(doc_URL) as url:
+            dataset = json.loads(url.read()) 
+        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        local_path = 'api/uploads/'
+        
+        
+        
+        
+        # DEF DATA
+        suggest_sale_price = doc.to_dict()['sell_stats']['suggest_sale_price']
+        # print('suggest_sale_price', doc.to_dict()['sell_stats']['suggest_sale_price'])
+        suggest_buy_price = doc.to_dict()['buy_stats']['suggest_buy_price']
+        # print('suggest_buy_price', doc.to_dict()['buy_stats']['suggest_buy_price'])
+        avg_buy_price = doc.to_dict()['product_stats']['avg_buy_price']
+        # print('avg_buy_price', doc.to_dict()['product_stats']['avg_buy_price'])
+        
+        inv_cap = stock * avg_buy_price
+        # print('inv_cap', stock * avg_buy_price)
+        saving = suggest_buy_price * desc
+        # print('saving', suggest_buy_price * desc)
+        desc_price = avg_buy_price - saving
+        # print('desc_price', avg_buy_price - saving)
+        total_saving = saving * condition
+        # print('total_saving', saving * condition)
+        # print(desc_price, condition)
+        invest = desc_price * condition
+        # print('invest', invest)
+        total_inv = inv_cap + invest
+        # print('total_inv', inv_cap + (desc_price * condition))
+        remaining_inv = -(total_inv)
+        # print('remaining_inv', -(total_inv))
+        remaining_stock = stock + condition
+        # print('remaining_stock', stock + condition)
+        year_sales = dataset[0:12]
+        
+        global profits
+        global utilities
+        global porUtilities
+        global viability
+        global message
+        
+        profits = []
+        for cant in year_sales:
+            # print('cantidad restante', remaining_stock)
+            remaining_stock = remaining_stock - cant
+            possible_sales = cant * suggest_sale_price
+            # print('posibles ventas',possible_sales)
+            remaining_inv = remaining_inv + possible_sales
+            # print('inversión restante',remaining_inv)
+            if remaining_inv > 0 and remaining_stock > 0 :
+                profits.append(remaining_stock * suggest_sale_price)
+        
+        if len(profits) > 0:
+            profits = sum(profits)
+            # print(profits)
+            utilities = profits - total_saving
+            # print(utilities)
+            if utilities > 0:
+                porUtilities = (total_saving * 100)/profits
+                viability = True
+                message = 'La oferta es conveniente'
+            else: 
+                viability = False
+                porUtilities = 0
+                message = 'Solicita más descuento'
+        else:
+            viability = False
+            message = 'La condición de compra es alta'
+            utilities = 0
+            porUtilities = 0
+
+        print(message)
+        result = {
+            "viability":viability,
+            "message":message,
+            "invest_capital": inv_cap,
+            "saving":saving,
+            "desc_price": desc_price,
+            "total_saving": total_saving,
+            "total_invest": total_inv,
+            "profits": profits,
+            "utilities": utilities,
+            "percent_utilities": porUtilities,
+        }
+        
+        
+        doc_ref.collection('providers_offers').document(provider).set(result)
+        
+        return Response({
+            "result": result,
+            "status":200,
+            "message":"ok",
+        })
 
 class EstimatedPrediction(APIView):
     def post(self, request, format=None):

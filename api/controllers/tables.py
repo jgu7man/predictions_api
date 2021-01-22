@@ -36,14 +36,14 @@ class LoadTable(APIView):
         
         # FILTER THE LIST
         df = pd.read_csv(doc_URL,  decimal=".")
-        products_list = df[['codigo', 'descripcion']]
-        products_list = products_list.drop_duplicates(subset=['codigo']).dropna()
-        products_list['descripcion'] = products_list['descripcion'].str.strip()
+        products_list = df[['Codigo', 'Descripcion']]
+        products_list = products_list.drop_duplicates(subset=['Codigo']).dropna()
+        products_list['Descripcion'] = products_list['Descripcion'].str.strip()
         
         
         # GENERATE JSON RESULT
         loadfile_result = products_list.to_json(orient="table")
-        count = products_list.describe()['codigo']['count']
+        count = products_list.describe()['Codigo']['count']
     
         result = {
             'data': result_data,

@@ -97,6 +97,7 @@ TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
         'DIRS': [
+            os.path.join(BASE_DIR, 'sales_predictions/views/'),
             os.path.join(BASE_DIR, 'api/views/'),
             os.path.join(BASE_DIR, 'firebase/')   
         ],
@@ -148,7 +149,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/3.0/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'es-mx'
 
 TIME_ZONE = 'UTC'
 
@@ -162,7 +163,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.0/howto/static-files/
 
-STATIC_URL = 'https://storage.googleapis.com/sales-prediction-serv/'
+STATIC_URL = 'https://storage.googleapis.com/api-sales-predictions/static'
 
 CORS_ORIGIN_ALLOW_ALL = False
 STATIC_ROOT = 'static'
