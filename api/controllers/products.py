@@ -68,7 +68,7 @@ class FilterProduct(APIView):
             'status':400
         }, status=400)
         
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         
         print('petición realizada con éxito')
         # display(product_selected.head())
@@ -79,7 +79,7 @@ class FilterProduct(APIView):
         global local_path
         product_name = product_selected['Descripcion'].unique()[0].strip()
         product_refname = product_name.replace(' ', '_').lower()
-        product_path = 'tables/'+table_id+'/products/'+product_refname+'/'
+        product_path = 'tables/'+table_id+'/products/'+product_id+'/'
         local_path = 'api/uploads/'
         
 
@@ -99,8 +99,8 @@ class FilterProduct(APIView):
         
 
         # STORAGE FILES
-        product_selected.to_json(local_path+'dataset.json', orient="columns")
-        datasetURL = upload_file(local_path, product_path,'dataset.json')
+        product_selected.to_csv(local_path+'dataset.csv', orient="columns")
+        datasetURL = upload_file(local_path, product_path,'dataset.csv')
         print('dataset uploaded')
         
         

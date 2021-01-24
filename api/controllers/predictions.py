@@ -9,8 +9,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 # from IPython.core.display import display
+from datetime import datetime
 
 
+import pytz
 import math
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -23,6 +25,7 @@ import urllib.request
 db = FirebaseApp.fs
 st = FirebaseApp.st
 mlp.style.use('seaborn')
+tz = pytz.timezone('America/Mexico_City')
 
 
 def ValidateRequest(query_params, request):
@@ -53,7 +56,7 @@ class MonthSalesPrediction(APIView):
         table_id = params['table']
         product_id = params['product']
         query_months = params['months']
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         
         
         
@@ -124,7 +127,7 @@ class MonthSalesPrediction(APIView):
         
 class ReverseSalesPredictions(APIView):
     def get(self, request, format=None):
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         
         try: params = ValidateRequest(['table', 'product', 'cant'], request.query_params)
         except: return Response({
@@ -226,7 +229,8 @@ def train_year_predictions(dataset):
     return {
         'reg': reg,
         'score': X,
-        'predictionsURL': yearpredictionsURL
+        'predictionsURL': yearpredictionsURL,
+        'predict_year': predict_year,
     }
 
 
@@ -242,17 +246,21 @@ class AnalyzeProvOffering(APIView):
             'status': 400
         }, status=400)
         
-        table_id = params['table']
-        product_id = params['product']
-        provider = params['provider']
-        condition = int(params['condition'])
-        desc = int(params['desc']) / 100
-        stock = int(params['stock'])
         
+        query = {
+            'table': params['table'],
+            'product': params['product'],
+            'provider': params['provider'],
+            'condition': int(params['condition']),
+            'desc': int(params['desc']) / 100,
+            'stock': int(params['stock']),
+            
+        }
 
+        print(query)
 
         # IMPORT FILE
-        cloud_path = 'tables/'+table_id+'/products/'+product_id
+        cloud_path = 'tables/'+query['table']+'/products/'+query['product']
         doc_ref = db.document(cloud_path)
         
         try:doc = doc_ref.get()
@@ -261,11 +269,18 @@ class AnalyzeProvOffering(APIView):
             'status': 404
         })
         
-        doc_URL = doc.to_dict()['year_predictions_URL']
         global dataset
-        with urllib.request.urlopen(doc_URL) as url:
-            dataset = json.loads(url.read()) 
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        if doc.to_dict()['year_predictions_URL']:
+            doc_URL = doc.to_dict()['year_predictions_URL']
+            with urllib.request.urlopen(doc_URL) as url:
+                dataset = json.loads(url.read()) 
+        else: 
+            doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
+            month_sales = pd.read_csv(doc_URL,  decimal=".")
+            train_result = train_year_predictions(month_sales)
+            dataset = train_result['predict_year']
+            
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         local_path = 'api/uploads/'
         
         
@@ -279,22 +294,22 @@ class AnalyzeProvOffering(APIView):
         avg_buy_price = doc.to_dict()['product_stats']['avg_buy_price']
         # print('avg_buy_price', doc.to_dict()['product_stats']['avg_buy_price'])
         
-        inv_cap = stock * avg_buy_price
+        inv_cap = query['stock'] * avg_buy_price
         # print('inv_cap', stock * avg_buy_price)
-        saving = suggest_buy_price * desc
+        saving = suggest_buy_price * query['desc']
         # print('saving', suggest_buy_price * desc)
         desc_price = avg_buy_price - saving
         # print('desc_price', avg_buy_price - saving)
-        total_saving = saving * condition
+        total_saving = saving * query['condition']
         # print('total_saving', saving * condition)
         # print(desc_price, condition)
-        invest = desc_price * condition
+        invest = desc_price *   query['condition']
         # print('invest', invest)
         total_inv = inv_cap + invest
         # print('total_inv', inv_cap + (desc_price * condition))
         remaining_inv = -(total_inv)
         # print('remaining_inv', -(total_inv))
-        remaining_stock = stock + condition
+        remaining_stock = query['stock'] + query['condition']
         # print('remaining_stock', stock + condition)
         year_sales = dataset[0:12]
         
@@ -335,21 +350,30 @@ class AnalyzeProvOffering(APIView):
             porUtilities = 0
 
         print(message)
+        queried = datetime.now(tz)
         result = {
             "viability":viability,
             "message":message,
-            "invest_capital": inv_cap,
-            "saving":saving,
-            "desc_price": desc_price,
-            "total_saving": total_saving,
-            "total_invest": total_inv,
-            "profits": profits,
-            "utilities": utilities,
-            "percent_utilities": porUtilities,
+            "suggest_sale_price":int( suggest_sale_price),
+            "suggest_buy_price":int( suggest_buy_price),
+            "saving":int(saving),
+            "desc_price":int( desc_price),
+            "invested_capital":int( inv_cap),
+            "invest":int( invest),
+            "total_saving":int( total_saving),
+            "total_invest":int( total_inv),
+            "profits":int( profits),
+            "utilities":int( utilities),
+            "percent_utilities":int( porUtilities),
         }
         
+        query['desc'] = query['desc'] * 100
         
-        doc_ref.collection('providers_offers').document(provider).set(result)
+        doc_ref.collection('providers_offers').document(query['provider']).set({
+            "queried": queried,
+            "result":result,
+            "query":query
+        })
         
         return Response({
             "result": result,
@@ -358,38 +382,38 @@ class AnalyzeProvOffering(APIView):
         })
 
 class EstimatedPrediction(APIView):
-    def post(self, request, format=None):
+    def get(self, request, format=None):
         # VALIDATE THERE IS TABLE ID
         try:
-            table_id = request.data['table']
+            table_id = request.query_params['table']
         except: return Response({
                 'message': 'La petición debe incluir el atributo "table" en el body',
-                'status':500
-            })
+                'status':400
+            }, status=400)
         
         # VALIDATE IS PRODUCT ID     
-        try: product_id = request.data['product']
+        try: product_id = request.query_params['product']
         except: return Response({
                 'message': 'La petición debe incluir el atributo "product" en el body',
-                'status':500
-            })
+                'status':400
+            }, status=400)
         
         # VALIDATE IS TEST SIZE    
-        try: test_size = request.data['test_size']
+        try: test_size = request.query_params['test_size']
         except: return Response({
                 'message': 'La petición debe incluir el atributo "test_size" en el body',
-                'status':500
-            })
+                'status':400
+            }, status=400)
         
         # VALIDATE IS TEST SIZE    
-        try: window_size = request.data['window_size']
+        try: window_size = request.query_params['window_size']
         except: return Response({
                 'message': 'La petición debe incluir el atributo "window_size" en el body',
-                'status':500
-            })
+                'status':400
+            }, status=400)
     
         # IMPORT FILE
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
         
@@ -397,9 +421,13 @@ class EstimatedPrediction(APIView):
         except: return Response({
             'message':'No se encontró el documento en la base de datos',
             'status': 404
-        })
+        }, 404)
         
-        doc_URL = doc.to_dict()['stats']['files']['timeline']
+        try: doc_URL = doc.to_dict()['time_stats']['files']['timeline']
+        except: return Response({
+            "message": "No se encontró el archivo",
+            "status": 404
+        }, status=404)
         product_name = doc.to_dict()['name']
         dataset = pd.read_json(doc_URL)
         dataset = dataset.fillna(method='ffill')
@@ -407,9 +435,7 @@ class EstimatedPrediction(APIView):
         predict_results = make_estimate_prediction(dataset, test_size, window_size, product_name)
         
         est_pred_imgURL = upload_file('api/uploads/',cloud_path, 'estimated_predict.jpg' )
-        default_storage.delete('api/uploads/estimated_predict.jpg')
         est_pred_jsonURL = upload_file('api/uploads/',cloud_path, 'estimated_predict.json' )
-        default_storage.delete('api/uploads/estimated_predict.json')
         
         predict_results['imgURL'] = est_pred_imgURL
         predict_results['jsonURL'] = est_pred_jsonURL
@@ -418,7 +444,7 @@ class EstimatedPrediction(APIView):
         except: return Response({
             'message':'No se pudo guardar',
             'status':500
-        })
+        }, status=500)
         
         print('si se guardó')
         
@@ -522,7 +548,7 @@ class ARIMAprediction(APIView):
         
         print('body_ok')
         
-        locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
         

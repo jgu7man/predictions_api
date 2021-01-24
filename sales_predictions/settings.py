@@ -29,7 +29,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = '13193-x)6g1y_bacmpt++h-m5w77^!cw0ae^$dkg@2op3(nxf_'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
@@ -163,7 +163,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.0/howto/static-files/
 
-STATIC_URL = 'https://storage.googleapis.com/api-sales-predictions/static'
+STATIC_URL = 'https://storage.googleapis.com/api-sales-predictions/static/'
 
 CORS_ORIGIN_ALLOW_ALL = False
 STATIC_ROOT = 'static'
