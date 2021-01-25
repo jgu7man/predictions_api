@@ -16,6 +16,7 @@ import numpy as np
 import locale
 import warnings
 import json
+import os
 warnings.filterwarnings("ignore")
 
 
@@ -77,30 +78,29 @@ class FilterProduct(APIView):
         global product_name
         global product_path
         global local_path
+        global current_directory
         product_name = product_selected['Descripcion'].unique()[0].strip()
         product_refname = product_name.replace(' ', '_').lower()
         product_path = 'tables/'+table_id+'/products/'+product_id+'/'
+        current_directory = os.path.abspath(os.path.dirname(__file__))+'/'
         local_path = 'api/uploads/'
         
 
         # GET STATS
         product_stats = get_product_stats(product_selected)
         print('product_stats ok')
-        # display(json.dumps(product_stats, indent=4))
         sell_stats = get_sell_stats(product_selected)
         print('sell_stats ok')
-        # display(json.dumps(sell_stats, indent=4))
         time_stats = get_sales_timeline(product_selected)
         print('time_stats ok')
-        # display(json.dumps(time_stats, indent=4))
         buy_stats = get_buy_stats(product_selected)
         print('buy_stats ok')
-        # display(json.dumps(buy_stats, indent=4))
         
 
+
         # STORAGE FILES
-        product_selected.to_csv(local_path+'dataset.csv', orient="columns")
-        datasetURL = upload_file(local_path, product_path,'dataset.csv')
+        product_selected.to_csv(current_directory+'product_dataset.csv')
+        datasetURL = upload_file(current_directory, product_path,'product_dataset.csv')
         print('dataset uploaded')
         
         
@@ -134,13 +134,13 @@ def get_product_stats(dataset):
     
     # CALCULATE PROMEDIATES
     # display(dataset['Unitario Venta'].describe())
-    sales_quantity =  dataset['Unidades'].describe()['count']
-    avg_sell_price =  dataset['Unitario Venta'].describe()['mean']
-    max_sell_price =  dataset['Unitario Venta'].describe()['max']
     avg_margin =      dataset['PorMargen'].describe()['mean']
+    avg_buy_price = dataset['Costo Unitario'].describe()['mean']
+    avg_sale_price =  dataset['Unitario Venta'].describe()['mean']
     max_margin =      dataset['PorMargen'].describe()['max']
-    avg_purch_price = dataset['Costo Unitario'].describe()['mean']
-    min_purch_price = dataset['Costo Unitario'].describe()['min']
+    max_sale_price =  dataset['Unitario Venta'].describe()['max']
+    min_buy_price = dataset['Costo Unitario'].describe()['min']
+    sales_quantity =  dataset['Unidades'].describe()['count']
 
     print('stats created')
 
@@ -150,15 +150,16 @@ def get_product_stats(dataset):
     stats = {
         "sold_units": int(sold_units),
         "sales_quantity":int(sales_quantity),
-        "avg_sale_price":int(avg_sell_price),
-        "max_sale_price":int(max_sell_price),
+        "avg_sale_price":int(avg_sale_price),
+        "max_sale_price":int(max_sale_price),
         "avg_margin":int(avg_margin * 100),
         "max_margin":int(max_margin * 100),
-        "avg_buy_price":int(avg_purch_price),
-        "min_buy_price":int(min_purch_price),
+        "avg_buy_price":int(avg_buy_price),
+        "min_buy_price":int(min_buy_price),
     }
     return stats
     
+
 def get_sell_stats(dataset):
     precio_venta_list = dataset.groupby(
         dataset['Unitario Venta'], 
@@ -198,10 +199,10 @@ def get_sell_stats(dataset):
     suggest_sale_price = reg.predict([[avg_margen]])
     print('sell predictions ok')
     
-    
+    plt.figure()
     plt.plot(predict, 'ro', suggest_sale_price, 'bo')
-    plt.savefig(local_path+'suggest_sale_price.jpg')
-    suggessalepriceURL = upload_file(local_path, product_path, 'suggest_sale_price.jpg')
+    plt.savefig(current_directory+'suggest_sale_price.jpg')
+    suggessalepriceURL = upload_file(current_directory, product_path, 'suggest_sale_price.jpg')
     print('sells chart created')
     
     return {
@@ -209,8 +210,11 @@ def get_sell_stats(dataset):
         'avg_throwput_sale': int(avg_margen),
         'score_error2': int(score_error2),
         'suggest_sale_price': int(suggest_sale_price),
-        "suggest_sale_price_img": suggessalepriceURL
+        "suggest_sale_price_img": suggessalepriceURL,
+        "avg_sale_price": precio_venta_list.describe()['Unitario Venta']['mean'],
+        "max_sale_price": precio_venta_list.describe()['Unitario Venta']['max']
     }
+
 
 def get_buy_stats(dataset):
     precio_compra_list = dataset.groupby(
@@ -243,16 +247,20 @@ def get_buy_stats(dataset):
     suggest_buy_price = suggest_buy_price[0] 
     print('buy stats predicted')
     
+    plt.figure()
     plt.plot(predict, 'ro', suggest_buy_price, 'bo')
-    plt.savefig(local_path+'suggest_buy_price.jpg')
-    suggestbutpriceURL = upload_file(local_path, product_path,'suggest_buy_price.jpg')
+    plt.savefig(current_directory+'suggest_buy_price.jpg')
+    suggestbutpriceURL = upload_file(current_directory, product_path,'suggest_buy_price.jpg')
     print('but stats chart created')
     
     return {
         "error_score2":int(error_score2),
         "suggest_buy_price": int(suggest_buy_price),
-        "suggest_buy_price_URL": suggestbutpriceURL 
+        "suggest_buy_price_URL": suggestbutpriceURL,
+        'avg_buy_price': precio_compra_list.describe()['Unitario Venta']['mean'],
+        "max_buy_price": precio_compra_list.describe()['Unitario Venta']['min']
     }
+
             
 def get_sales_timeline(dataset):
     
@@ -262,22 +270,86 @@ def get_sales_timeline(dataset):
         'Total Costo': 'sum',
     })
     
+    first = sales_timeline.iloc[0].name
+    last = sales_timeline.iloc[-1].name
+    
+    # STORAGE FILE
+    sales_timeline.to_csv( current_directory+'sales-timeline.json')
+    timelineURL = upload_file(current_directory, product_path, 'sales-timeline.json')
+    print('timeline json created')
+    
+    timestats = get_timestats(dataset)
+    
+    
+    unitsbymonth = get_salesvscosts(sales_timeline)
+    
+
+    monthsbox = get_boxmonths(sales_timeline)
+    
+    
+    
+    # BUILD RESULT
+    result = {
+        "max_monthsales": int(monthsbox['maxlength']),
+        "avgsales_per_month": float("{:.2f}".format(monthsbox['avg_mes'])),
+        "first_sale":first,
+        "last_sale":last,
+        "max_sales_month": timestats['sales_months'],
+        "max_throwput_month": timestats['margen_months'],
+        "files": {
+            "salesvscosts_chart_URL": unitsbymonth['salesvscosts_chart_URL'],
+            "unitsbymonths_df_URL": unitsbymonth['unitsbymonths_df_URL'],
+            "timeline":timelineURL,
+            "meses_list_df": timestats['meses_list_df'],
+            "boxchart_URL": monthsbox['boxchart_URL'],
+        },
+    }
+    
+    return result
+    
+
+def get_salesvscosts(dataset):
     # GROUP DATA BY SALES IN DATE 
-    df_dates = sales_timeline.groupby(
-        sales_timeline.index, 
+    df_dates = dataset.groupby(
+        dataset.index, 
         as_index=True).aggregate({
             'Unidades': 'sum' 
         })
     
     
+    df_periods = dataset.groupby(pd.Grouper(freq='W')).aggregate({
+        # 'Unidades': 'sum',
+        'Ventas': 'sum',
+        'Total Costo': 'sum',
+        })
+
+    plt.figure()
+    df_periods.plot(figsize = (14,6),  title='Ventas vs Costos', )
+    # df_periods['Total Costo'].plot(figsize = (14,6), lw=2, label="Costos")
     
-    # GROUP DATA BY MONTHS
-    product_dataset = sales_timeline['Unidades']
+    # df_dates.plot( figsize=(12, 5), title="Unidades vendidas por mes");
+    plt.savefig(current_directory+'salesvscosts.jpg')
+    salesvscosts_chart_URL = upload_file(current_directory, product_path, 'salesvscosts.jpg')
+    print('sales normalized jpg created')
+    
+    
+    df_dates.to_csv(current_directory+'unitsbymonths.csv', header=False)
+    unitsbymonths_df_URL = upload_file(current_directory, product_path, 'unitsbymonths.csv')
+    print('unitsbymonths csv created')
+    
+    return {
+        "salesvscosts_chart_URL": salesvscosts_chart_URL,
+        "unitsbymonths_df_URL": unitsbymonths_df_URL,
+    }
+    
+    
+def get_boxmonths(dataset):
+    
+    
+    product_dataset = dataset['Unidades']
     months = product_dataset.groupby(pd.Grouper(freq='M'))
     print('months sales grouped')
-    
-    
-    # GET SOME DATA
+     
     indexes = []
     datas = []
     lengths = []
@@ -312,10 +384,24 @@ def get_sales_timeline(dataset):
     
     print('normalized dataframe created')
     # MAKE CHARTS IMAGES
+    plt.figure()
     months_box = normalized_df.replace(0,np.nan )
-    months_box.plot.box(figsize=(8,5))
+    boxes = months_box.boxplot(figsize=(8,5))
+    
+    boxes.figure.savefig(current_directory+"boxes-chart.jpg", format="jpg")
+    boxchart_URL = upload_file(current_directory, product_path, 'boxes-chart.jpg')
+    print('sales chart created')
     
     
+    return {
+        "maxlength": maxlength,
+        "avg_mes": avg_mes,
+        "boxchart_URL": boxchart_URL
+    }
+
+    
+    
+def get_timestats(dataset):
     # MONTHS SALES
     ps_dates = dataset.set_index('Fecha')
     meses_list = ps_dates.groupby(pd.Grouper(freq="M")).aggregate({
@@ -348,69 +434,13 @@ def get_sales_timeline(dataset):
         margen_months.append(str_month)
     print('max throwput months getted')
    
-   
-    df_periods = sales_timeline.groupby(pd.Grouper(freq='W')).aggregate({
-        'Unidades': 'sum',
-        'Ventas': 'sum',
-        'Total Costo': 'sum',
-        })
-
-    df_periods['Ventas'].plot(figsize = (14,6), lw=2, title='ventas vs costos')
-    df_periods['Total Costo'].plot(figsize = (14,6), lw=2)
-    
-    
-   
-   
-    # STORAGE FILE
-    sales_timeline.to_csv( local_path+'sales-timeline.json')
-    timelineURL = upload_file(local_path, product_path, 'sales-timeline.json')
-    print('timeline json created')
-    
-    df_dates.to_csv(local_path+'sales-dates.csv', header=False)
-    salesdatesURL = upload_file(local_path, product_path, 'sales-dates.csv')
-    print('sales-dates csv created')
-    
-    plt.savefig(local_path+'month_sales_normalized.jpg')
-    monthsaleschartURL = upload_file(local_path, product_path, 'month_sales_normalized.jpg')
-    print('sales normalized jpg created')
-    
-    meses_list.to_csv(local_path+'month-sales.csv')
-    meseslistURL = upload_file(local_path, product_path, 'month-sales.csv')
+    meses_list.to_csv(current_directory+'month-sales.csv')
+    meseslistURL = upload_file(current_directory, product_path, 'month-sales.csv')
     print('month sales csv created')
     
-    plt.savefig(local_path+'sales-chart.jpg')
-    saleschartURL = upload_file(local_path, product_path, 'sales-chart.jpg')
-    print('sales chart created')
-    
-    
-    first = dataset.iloc[0]['Fecha']
-    last = dataset.iloc[-1]['Fecha']
-    
-    
-    # BUILD RESULT
-    result = {
-        "max_monthsales": int(maxlength),
-        "avgsales_per_month": float("{:.2f}".format(avg_mes)),
-        "first_sale":first,
-        "last_sale":last,
-        "max_sales_month": sales_months,
-        "max_throwput_month": margen_months,
-        "files": {
-            "month_sales_chart": monthsaleschartURL,
-            "sales_dates": salesdatesURL,
-            "timeline":timelineURL,
-            "month_sales": meseslistURL,
-            "sales_chart": saleschartURL,
-        },
+    return {
+        "sales_months": sales_months,
+        "margen_months": margen_months,
+        "meses_list_df": meseslistURL
     }
-    
-    return result
-    
-
-
-
-
-
-    
-
     

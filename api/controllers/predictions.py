@@ -18,9 +18,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib  as mlp
 import numpy as np
-import locale
 import json, codecs
 import urllib.request
+import os
 
 db = FirebaseApp.fs
 st = FirebaseApp.st
@@ -79,7 +79,7 @@ class MonthSalesPrediction(APIView):
         # READ TABLE
         doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
         dataset = pd.read_csv(doc_URL,  decimal=".")  
-        local_path = 'api/uploads/'
+        local_path = os.path.abspath(os.path.dirname(__file__))+'/'
         
         print('Archivo cargado')
         # display(dataset.head())
@@ -155,7 +155,7 @@ class ReverseSalesPredictions(APIView):
         global local_path
         doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
         dataset = pd.read_csv(doc_URL,  decimal=".")  
-        local_path = 'api/uploads/'
+        local_path = os.path.abspath(os.path.dirname(__file__))+'/'
         
         print('Archivo cargado')
         # display(dataset.head())
@@ -196,46 +196,6 @@ class ReverseSalesPredictions(APIView):
         })
 
 
-
-def train_year_predictions(dataset):
-    
-    X = dataset[['Unitario Venta']]
-    Y = dataset['Unidades']
-
-    sc_X = StandardScaler()
-
-    X = sc_X.fit_transform(X)
-    X = sc_X.transform(X)
-
-    # Entrenación
-    reg = LinearRegression().fit(X, Y)
-    print("The Linear regression score on training data is ", round(reg.score(X, Y),2))
-    
-
-    # Basado en la cantidad de meses obtenidos, se ajusta para predecir al menos 1 año
-    repeats = (12 - len(X)) / int(len(X)) 
-    repeats = math.ceil(repeats) + 1
-    X = np.tile(X,(repeats, 1))
-    
-    # crea lista de predicciones
-    predict_year = reg.predict(X)
-    p = predict_year.tolist()
-    json.dump(p, codecs.open(local_path+'year_predictions.json', 'w'))
-    print(cloud_path)
-    yearpredictionsURL = upload_file(local_path, cloud_path+'/', 'year_predictions.json')
-    print(yearpredictionsURL)
-    print('preicciones ok')
-    
-    return {
-        'reg': reg,
-        'score': X,
-        'predictionsURL': yearpredictionsURL,
-        'predict_year': predict_year,
-    }
-
-
-
-
 class AnalyzeProvOffering(APIView):
     def get(self, request, format=None):
         # VALIDATE THERE IS TABLE ID
@@ -254,14 +214,20 @@ class AnalyzeProvOffering(APIView):
             'condition': int(params['condition']),
             'desc': int(params['desc']) / 100,
             'stock': int(params['stock']),
-            
         }
 
         print(query)
 
         # IMPORT FILE
+        global cloud_path
+        global local_path
+        global dataset
+        
         cloud_path = 'tables/'+query['table']+'/products/'+query['product']
         doc_ref = db.document(cloud_path)
+        local_path = os.path.abspath(os.path.dirname(__file__))+'/'
+        print(local_path)
+        
         
         try:doc = doc_ref.get()
         except: return Response({
@@ -269,48 +235,39 @@ class AnalyzeProvOffering(APIView):
             'status': 404
         })
         
-        global dataset
-        if doc.to_dict()['year_predictions_URL']:
+        
+        try: 
+            doc.to_dict()['year_predictions_URL']
             doc_URL = doc.to_dict()['year_predictions_URL']
             with urllib.request.urlopen(doc_URL) as url:
                 dataset = json.loads(url.read()) 
-        else: 
+        except:
+            print('se creará el archivo')
             doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
             month_sales = pd.read_csv(doc_URL,  decimal=".")
             train_result = train_year_predictions(month_sales)
             dataset = train_result['predict_year']
+        
             
-        # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
-        local_path = 'api/uploads/'
+        
+        
         
         
         
         
         # DEF DATA
         suggest_sale_price = doc.to_dict()['sell_stats']['suggest_sale_price']
-        # print('suggest_sale_price', doc.to_dict()['sell_stats']['suggest_sale_price'])
         suggest_buy_price = doc.to_dict()['buy_stats']['suggest_buy_price']
-        # print('suggest_buy_price', doc.to_dict()['buy_stats']['suggest_buy_price'])
         avg_buy_price = doc.to_dict()['product_stats']['avg_buy_price']
-        # print('avg_buy_price', doc.to_dict()['product_stats']['avg_buy_price'])
         
         inv_cap = query['stock'] * avg_buy_price
-        # print('inv_cap', stock * avg_buy_price)
         saving = suggest_buy_price * query['desc']
-        # print('saving', suggest_buy_price * desc)
         desc_price = avg_buy_price - saving
-        # print('desc_price', avg_buy_price - saving)
         total_saving = saving * query['condition']
-        # print('total_saving', saving * condition)
-        # print(desc_price, condition)
         invest = desc_price *   query['condition']
-        # print('invest', invest)
         total_inv = inv_cap + invest
-        # print('total_inv', inv_cap + (desc_price * condition))
         remaining_inv = -(total_inv)
-        # print('remaining_inv', -(total_inv))
         remaining_stock = query['stock'] + query['condition']
-        # print('remaining_stock', stock + condition)
         year_sales = dataset[0:12]
         
         global profits
@@ -320,6 +277,10 @@ class AnalyzeProvOffering(APIView):
         global message
         
         profits = []
+        invests = [remaining_inv]
+        month1 = 0
+        month2 = 0
+        print(suggest_sale_price)
         for cant in year_sales:
             # print('cantidad restante', remaining_stock)
             remaining_stock = remaining_stock - cant
@@ -327,9 +288,17 @@ class AnalyzeProvOffering(APIView):
             # print('posibles ventas',possible_sales)
             remaining_inv = remaining_inv + possible_sales
             # print('inversión restante',remaining_inv)
-            if remaining_inv > 0 and remaining_stock > 0 :
-                profits.append(remaining_stock * suggest_sale_price)
+            invests.append(int(remaining_inv))
+            if remaining_inv > 0:
+                if remaining_stock > 0 :
+                    # print(possible_sales)
+                    profits.append(possible_sales)
+                    month2 = month2 + 1
+            else:
+                month1 = month1 + 1
+                month2 = month2 + 1
         
+        # print(month1, month2)
         if len(profits) > 0:
             profits = sum(profits)
             # print(profits)
@@ -369,10 +338,20 @@ class AnalyzeProvOffering(APIView):
         
         query['desc'] = query['desc'] * 100
         
+        plt.figure(figsize=(10,5))
+        plt.plot( invests, 'b-', label='inverst');
+        plt.plot( [month1,month1], [invests[0], invests[len(invests)-1]], 'g--', label='profits starts');
+        plt.plot( [month2,month2], [invests[0], invests[len(invests)-1]], 'r--', label='profits ends');
+        plt.legend();
+        plt.savefig(local_path+'posibles_sale.jpg')
+        posible_sales_URL = upload_file(local_path, cloud_path, 'posibles_sale.jpg')
+        
+        
         doc_ref.collection('providers_offers').document(query['provider']).set({
             "queried": queried,
             "result":result,
-            "query":query
+            "query":query,
+            "posible_sales_URL": posible_sales_URL
         })
         
         return Response({
@@ -380,6 +359,47 @@ class AnalyzeProvOffering(APIView):
             "status":200,
             "message":"ok",
         })
+
+
+
+
+
+def train_year_predictions(dataset):
+    
+    X = dataset[['Unitario Venta']]
+    Y = dataset['Unidades']
+
+    sc_X = StandardScaler()
+
+    X = sc_X.fit_transform(X)
+    X = sc_X.transform(X)
+
+    # Entrenación
+    reg = LinearRegression().fit(X, Y)
+    print("The Linear regression score on training data is ", round(reg.score(X, Y),2))
+    
+
+    # Basado en la cantidad de meses obtenidos, se ajusta para predecir al menos 1 año
+    repeats = (12 - len(X)) / int(len(X)) 
+    repeats = math.ceil(repeats) + 1
+    X = np.tile(X,(repeats, 1))
+    
+    # crea lista de predicciones
+    predict_year = reg.predict(X)
+    p = predict_year.tolist()
+    json.dump(p, codecs.open(local_path+'year_predictions.json', 'w'))
+    print(cloud_path)
+    yearpredictionsURL = upload_file(local_path, cloud_path+'/', 'year_predictions.json')
+    print(yearpredictionsURL)
+    print('preicciones ok')
+    
+    return {
+        'reg': reg,
+        'score': X,
+        'predictionsURL': yearpredictionsURL,
+        'predict_year': predict_year,
+    }
+
 
 class EstimatedPrediction(APIView):
     def get(self, request, format=None):
