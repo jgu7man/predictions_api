@@ -36,10 +36,13 @@ ALLOWED_HOSTS = ['*']
 CORS_ORIGIN_WHITELIST = (
 "http://127.0.0.1:4200",
 "http://localhost:4200",
+"https://sales-predict.web.app",
+"https://sales-predict.firebaseapp.com"
+'http://127.0.0.1:8000/'
 )
 
-
-CORS_ALLOW_CREDENTIALS=False
+CORS_ORIGIN_ALLOW_ALL = True
+CORS_ALLOW_CREDENTIALS = True
 
 
 CORS_ALLOW_METHODS = (
@@ -61,7 +64,9 @@ CORS_ALLOW_HEADERS = (
 'user-agent',
 'x-csrftoken',
 'x-requested-with',
-'Access-Control-Allow-Origin',)
+)
+
+
 
 # Application definition
 
@@ -81,6 +86,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -88,8 +94,9 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware'
 ]
+
+
 
 ROOT_URLCONF = 'sales_predictions.urls'
 

@@ -2,7 +2,7 @@ from api.firebase_app import FirebaseApp
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.core.files.storage import default_storage
-from api.controllers.file import upload_file
+from api.controllers.file import upload_file, upload_img
 from sklearn.svm import SVR
 from pmdarima.arima import auto_arima
 from sklearn.preprocessing import StandardScaler
@@ -11,7 +11,7 @@ from sklearn.metrics import r2_score
 # from IPython.core.display import display
 from datetime import datetime
 
-
+import time
 import pytz
 import math
 import pandas as pd
@@ -21,6 +21,7 @@ import numpy as np
 import json, codecs
 import urllib.request
 import os
+import io
 
 db = FirebaseApp.fs
 st = FirebaseApp.st
@@ -45,7 +46,6 @@ class MonthSalesPrediction(APIView):
     def get(self, request, format=None):
         
         
-        
         # VALIDATE PARAMS
         try: params = ValidateRequest(['table', 'product', 'months'], request.query_params)
         except: return Response({
@@ -55,7 +55,7 @@ class MonthSalesPrediction(APIView):
     
         table_id = params['table']
         product_id = params['product']
-        query_months = params['months']
+        query_months = int(params['months'])
         # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
         
         
@@ -66,6 +66,8 @@ class MonthSalesPrediction(APIView):
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
         
+        
+        print(cloud_path)
         try:doc = doc_ref.get()
         except: return Response({
             'message':'No se encontró el documento en la base de datos',
@@ -74,13 +76,21 @@ class MonthSalesPrediction(APIView):
         print('Petición realizada correctamente')
         
         
-        
-        
+        print(doc.exists)
         # READ TABLE
-        doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
-        dataset = pd.read_csv(doc_URL,  decimal=".")  
-        local_path = os.path.abspath(os.path.dirname(__file__))+'/'
+        if doc.exists:
+            doc_URL = doc.to_dict()['time_stats']['files']['meses_list_df']
+            try: dataset = pd.read_csv(doc_URL,  decimal=".")  
+            except: return Response({
+                'message':'Hace falta la lista de ventas por mes',
+                'status':404
+            }, status=404)
+        else: return Response({
+            'message': 'No existe el archivo solicitado', 
+            'status': 404
+        }, status=404)
         
+        local_path = os.path.abspath(os.path.dirname(__file__))+'/'
         print('Archivo cargado')
         # display(dataset.head())
         
@@ -153,7 +163,7 @@ class ReverseSalesPredictions(APIView):
         print('Petición realizada correctamente')
         
         global local_path
-        doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
+        doc_URL = doc.to_dict()['time_stats']['files']['meses_list_df']
         dataset = pd.read_csv(doc_URL,  decimal=".")  
         local_path = os.path.abspath(os.path.dirname(__file__))+'/'
         
@@ -200,7 +210,7 @@ class AnalyzeProvOffering(APIView):
     def get(self, request, format=None):
         # VALIDATE THERE IS TABLE ID
         
-        try: params = ValidateRequest(['table', 'product', 'provider', 'condition', 'desc', 'stock'], request.query_params)
+        try: params = ValidateRequest(['table', 'product', 'provider', 'buy_price', 'sale_price' 'condition', 'desc', 'stock'], request.query_params)
         except: return Response({
             'message': 'Falto un parámetro en la petición',
             'status': 400
@@ -211,6 +221,8 @@ class AnalyzeProvOffering(APIView):
             'table': params['table'],
             'product': params['product'],
             'provider': params['provider'],
+            'buy_price': params['buy_price'],
+            'sale_price': params['sale_price'],
             'condition': int(params['condition']),
             'desc': int(params['desc']) / 100,
             'stock': int(params['stock']),
@@ -243,7 +255,7 @@ class AnalyzeProvOffering(APIView):
                 dataset = json.loads(url.read()) 
         except:
             print('se creará el archivo')
-            doc_URL = doc.to_dict()['time_stats']['files']['month_sales']
+            doc_URL = doc.to_dict()['time_stats']['files']['meses_list_df']
             month_sales = pd.read_csv(doc_URL,  decimal=".")
             train_result = train_year_predictions(month_sales)
             dataset = train_result['predict_year']
@@ -261,7 +273,7 @@ class AnalyzeProvOffering(APIView):
         avg_buy_price = doc.to_dict()['product_stats']['avg_buy_price']
         
         inv_cap = query['stock'] * avg_buy_price
-        saving = suggest_buy_price * query['desc']
+        saving = query['buy_price'] * query['desc']
         desc_price = avg_buy_price - saving
         total_saving = saving * query['condition']
         invest = desc_price *   query['condition']
@@ -284,7 +296,7 @@ class AnalyzeProvOffering(APIView):
         for cant in year_sales:
             # print('cantidad restante', remaining_stock)
             remaining_stock = remaining_stock - cant
-            possible_sales = cant * suggest_sale_price
+            possible_sales = cant * query['sale_price']
             # print('posibles ventas',possible_sales)
             remaining_inv = remaining_inv + possible_sales
             # print('inversión restante',remaining_inv)
@@ -337,14 +349,14 @@ class AnalyzeProvOffering(APIView):
         }
         
         query['desc'] = query['desc'] * 100
+        time_id = time.time() * 100
         
         plt.figure(figsize=(10,5))
         plt.plot( invests, 'b-', label='inverst');
         plt.plot( [month1,month1], [invests[0], invests[len(invests)-1]], 'g--', label='profits starts');
         plt.plot( [month2,month2], [invests[0], invests[len(invests)-1]], 'r--', label='profits ends');
         plt.legend();
-        plt.savefig(local_path+'posibles_sale.jpg')
-        posible_sales_URL = upload_file(local_path, cloud_path, 'posibles_sale.jpg')
+        posible_sales_URL = upload_img(cloud_path, f'{time_id}-posibles_sale.jpg', plt)
         
         
         doc_ref.collection('providers_offers').document(query['provider']).set({
@@ -386,10 +398,14 @@ def train_year_predictions(dataset):
     
     # crea lista de predicciones
     predict_year = reg.predict(X)
-    p = predict_year.tolist()
-    json.dump(p, codecs.open(local_path+'year_predictions.json', 'w'))
+    year_df = pd.DataFrame(predict_year)
+    year_df.fillna(value=0, inplace=True)
+    df_file = year_df.to_csv(encoding='utf-8', index=False )
+    
+    # json.dump(p, codecs.open(local_path+'year_predictions.json', 'w'))
     print(cloud_path)
-    yearpredictionsURL = upload_file(local_path, cloud_path+'/', 'year_predictions.json')
+    # print(df_file)
+    yearpredictionsURL = upload_file(cloud_path+'/', 'year_predictions.csv', df_file)
     print(yearpredictionsURL)
     print('preicciones ok')
     
@@ -434,6 +450,7 @@ class EstimatedPrediction(APIView):
     
         # IMPORT FILE
         # locale.setlocale(locale.LC_TIME, 'es_MX.UTF-8')
+        global cloud_path
         cloud_path = 'tables/'+table_id+'/products/'+product_id
         doc_ref = db.document(cloud_path)
         
@@ -524,7 +541,7 @@ def make_estimate_prediction(dataset, test_size, window_size, product_name):
     plt.plot(y_test , label='Datos reales');
     plt.legend(loc='best')
     plt.title('Predicción de ventas ' + product_name)
-    plt.savefig('api/uploads/estimated_predict.jpg')
+    estimated_predict_URL = upload_img(cloud_path, 'estimated_predict.jpg', plt)
 
     from sklearn.metrics import mean_squared_error
     mse = mean_squared_error(y_test, y_test_hat)
@@ -536,6 +553,7 @@ def make_estimate_prediction(dataset, test_size, window_size, product_name):
         "months_predicted": len(hat_groups),
         "avg_for_sell": float("{:.2f}".format(mean_predicted)),
         "error_mean" : float("{:.2f}".format(mse)),
+        "estimated_predict_URL": estimated_predict_URL
     }
     
     return result
@@ -581,7 +599,7 @@ class ARIMAprediction(APIView):
         
         
         # VALIDATE DATASET
-        try: doc_URL = doc.to_dict()['month_details']['sales_dates']
+        try: doc_URL = doc.to_dict()['time_stats']['files']['unitsbymonths_df_URL']
         except: return Response({
             'message':'Falta dataset de datos normalizados',
             'status': 404
@@ -621,17 +639,13 @@ class ARIMAprediction(APIView):
         
         plt.figure(figsize=(12,6))
         plt.plot(predict);
-        plt.savefig('api/uploads/arima_prediction.jpg')
+        arima_pred_imgURL = upload_img(cloud_path, 'arima_prediction.jpg', plt)
         
         predict_df  = pd.DataFrame(data=predict)
-        predict_df.to_json('api/uploads/arima_prediction.json', orient="index")
-        
-        arima_pred_imgURL = upload_file('api/uploads/', cloud_path, 'arima_prediction.jpg')
-        default_storage.delete('api/uploads/arima_prediction.jpg')
-        arima_pred_jsonURL = upload_file('api/uploads/', cloud_path, 'arima_prediction.json')
-        default_storage.delete('api/uploads/arima_prediction.json')
-        
+        predict_JSON = predict_df.to_json( orient="index")
+        arima_pred_jsonURL = upload_file(cloud_path, 'arima_prediction.json', predict_JSON)
         print('files ok')
+        
         
         predict_result = {
             "avg_for_sell": float("{:.2f}".format(sells_avg)),

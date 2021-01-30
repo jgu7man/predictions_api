@@ -8,6 +8,7 @@ from django.core.files.storage import default_storage
 import pandas as pd
 import json
 import os
+import io
 
 db = FirebaseApp.fs
 st = FirebaseApp.st
@@ -74,8 +75,9 @@ class UploadFile(APIView):
         
         # UPLOAD FILE CSV TO STORAGE
         cloud_path = 'tables/'+doc_id+'/'
-        df.to_csv(current_directory+filename)
-        fileURL = upload_file(current_directory, cloud_path, filename)
+        df.fillna(value=0, inplace=True)
+        df_file = df.to_csv()
+        fileURL = upload_file(cloud_path, filename, df_file)
         print('Archivo cargado a storage')
         
         
@@ -160,11 +162,25 @@ def validate_file_struct(df, synonyms_cols):
     return df
         
         
-def upload_file(local_path, cloud_path, filename):
+def upload_file(cloud_path, filename, file):
+    # print(cloud_path+filename)
     bucket = st.bucket()
-    print(cloud_path+filename)
-    file = bucket.blob(cloud_path+filename)
-    file.upload_from_filename(local_path+filename)
-    file.make_public()
-    default_storage.delete(local_path+filename)
-    return file.public_url
+    cloud_file = bucket.blob(cloud_path+filename)
+    cloud_file.upload_from_string(file, content_type='application/octet-stream')
+    cloud_file.make_public()
+    # default_storage.delete(local_path+filename)
+    return cloud_file.public_url
+
+
+
+def upload_img(cloud_path, filename, file):
+    img_data = io.BytesIO()
+    file.savefig(img_data, format="jpg")
+    img_data.seek(0)
+    
+    bucket = st.bucket()
+    cloud_file = bucket.blob(cloud_path+filename)
+    cloud_file.upload_from_file(img_data, content_type='image/jpg')
+    cloud_file.make_public()
+    return cloud_file.public_url
+    

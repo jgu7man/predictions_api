@@ -3,7 +3,7 @@ from api.firebase_app import FirebaseApp
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.core.files.storage import default_storage
-from api.controllers.file import upload_file
+from api.controllers.file import upload_file, upload_img
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
@@ -60,7 +60,7 @@ class FilterProduct(APIView):
         
         # READ DOCUMENT
         df = pd.read_csv(doc_URL,  decimal=".", thousands=",")  
-        df['Fecha'] = pd.to_datetime(df['Fecha'])
+        df['Fecha'] = pd.to_datetime(df['Fecha'], format='%d/%m/%Y', errors='coerce')
         
         # VALIDATE IS PRODUCT IN LIST
         try:product_selected = df.loc[df['Codigo'] == product_id]
@@ -99,8 +99,8 @@ class FilterProduct(APIView):
 
 
         # STORAGE FILES
-        product_selected.to_csv(current_directory+'product_dataset.csv')
-        datasetURL = upload_file(current_directory, product_path,'product_dataset.csv')
+        ps_file = product_selected.to_csv()
+        datasetURL = upload_file(product_path,'product_dataset.csv', ps_file)
         print('dataset uploaded')
         
         
@@ -115,6 +115,7 @@ class FilterProduct(APIView):
             "time_stats": time_stats
         })
         print('firestore updated')
+        
         
         return Response({
             'status': 200,
@@ -201,14 +202,13 @@ def get_sell_stats(dataset):
     
     plt.figure()
     plt.plot(predict, 'ro', suggest_sale_price, 'bo')
-    plt.savefig(current_directory+'suggest_sale_price.jpg')
-    suggessalepriceURL = upload_file(current_directory, product_path, 'suggest_sale_price.jpg')
+    suggessalepriceURL = upload_img(product_path, 'suggest_sale_price.jpg', plt)
     print('sells chart created')
     
     return {
         'max_throwput_sale_price': int(max_venta_precio_margen),
         'avg_throwput_sale': int(avg_margen),
-        'score_error2': int(score_error2),
+        # 'score_error2': int(score_error2),
         'suggest_sale_price': int(suggest_sale_price),
         "suggest_sale_price_img": suggessalepriceURL,
         "avg_sale_price": precio_venta_list.describe()['Unitario Venta']['mean'],
@@ -249,12 +249,11 @@ def get_buy_stats(dataset):
     
     plt.figure()
     plt.plot(predict, 'ro', suggest_buy_price, 'bo')
-    plt.savefig(current_directory+'suggest_buy_price.jpg')
-    suggestbutpriceURL = upload_file(current_directory, product_path,'suggest_buy_price.jpg')
+    suggestbutpriceURL = upload_img(product_path,'suggest_buy_price.jpg', plt)
     print('but stats chart created')
     
     return {
-        "error_score2":int(error_score2),
+        # "error_score2":error_score2,
         "suggest_buy_price": int(suggest_buy_price),
         "suggest_buy_price_URL": suggestbutpriceURL,
         'avg_buy_price': precio_compra_list.describe()['Unitario Venta']['mean'],
@@ -274,8 +273,8 @@ def get_sales_timeline(dataset):
     last = sales_timeline.iloc[-1].name
     
     # STORAGE FILE
-    sales_timeline.to_csv( current_directory+'sales-timeline.json')
-    timelineURL = upload_file(current_directory, product_path, 'sales-timeline.json')
+    timeline_df = sales_timeline.to_csv( )
+    timelineURL = upload_file(product_path, 'sales-timeline.csv', timeline_df)
     print('timeline json created')
     
     timestats = get_timestats(dataset)
@@ -328,13 +327,12 @@ def get_salesvscosts(dataset):
     # df_periods['Total Costo'].plot(figsize = (14,6), lw=2, label="Costos")
     
     # df_dates.plot( figsize=(12, 5), title="Unidades vendidas por mes");
-    plt.savefig(current_directory+'salesvscosts.jpg')
-    salesvscosts_chart_URL = upload_file(current_directory, product_path, 'salesvscosts.jpg')
+    salesvscosts_chart_URL = upload_img( product_path, 'salesvscosts.jpg', plt)
     print('sales normalized jpg created')
     
     
-    df_dates.to_csv(current_directory+'unitsbymonths.csv', header=False)
-    unitsbymonths_df_URL = upload_file(current_directory, product_path, 'unitsbymonths.csv')
+    dates_df = df_dates.to_csv( header=False)
+    unitsbymonths_df_URL = upload_file( product_path, 'unitsbymonths.csv', dates_df)
     print('unitsbymonths csv created')
     
     return {
@@ -388,8 +386,8 @@ def get_boxmonths(dataset):
     months_box = normalized_df.replace(0,np.nan )
     boxes = months_box.boxplot(figsize=(8,5))
     
-    boxes.figure.savefig(current_directory+"boxes-chart.jpg", format="jpg")
-    boxchart_URL = upload_file(current_directory, product_path, 'boxes-chart.jpg')
+    # boxes.figure.savefig(current_directory+"boxes-chart.jpg", format="jpg")
+    boxchart_URL = upload_img( product_path, 'boxes-chart.jpg', boxes.figure)
     print('sales chart created')
     
     
@@ -434,8 +432,8 @@ def get_timestats(dataset):
         margen_months.append(str_month)
     print('max throwput months getted')
    
-    meses_list.to_csv(current_directory+'month-sales.csv')
-    meseslistURL = upload_file(current_directory, product_path, 'month-sales.csv')
+    monthlist_df = meses_list.to_csv()
+    meseslistURL = upload_file( product_path, 'month-sales.csv', monthlist_df)
     print('month sales csv created')
     
     return {
